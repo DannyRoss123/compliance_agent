@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import glob
+import hashlib
 import json
 import os
 import subprocess
@@ -49,7 +50,7 @@ class Finding:
 TEXT_EXT_BLOCKLIST = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".gz", ".tar", ".rar", ".bmp", ".ico"}
 
 DEFAULT_OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
-DEFAULT_OPENAI_MODEL: Optional[str] = None
+DEFAULT_OPENAI_MODEL: str = "gpt-4o-mini"
 DEFAULT_MAX_CODE_CHARS = 8000
 OPENAI_API_URL = DEFAULT_OPENAI_API_URL
 OPENAI_MODEL = DEFAULT_OPENAI_MODEL
@@ -248,9 +249,7 @@ def _call_openai_chat(messages: List[Dict[str, str]], model: Optional[str] = Non
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("Set OPENAI_API_KEY in your environment to run AI-based validation.")
-    model_name = model or OPENAI_MODEL
-    if not model_name:
-        raise RuntimeError("Set OPENAI_MODEL in your .env (e.g., OPENAI_MODEL=gpt-4o-mini).")
+    model_name = model or OPENAI_MODEL or DEFAULT_OPENAI_MODEL
     payload = {
         "model": model_name,
         "messages": messages,
@@ -384,7 +383,7 @@ def run_checks(tasks_cfg: Dict[str, Any], files: List[Path], repo_root: Path, re
             chunk_info = rule.get("source_chunk") or (rule.get("ai_spec") or {}).get("source_chunk")
             if chunk_info and isinstance(chunk_info, dict):
                 text = chunk_info.get("text", "")
-                text_hash = hash(text)
+                text_hash = hashlib.sha256(text.encode()).hexdigest()
                 if text_hash not in seen_texts and text.strip():
                     seen_texts.add(text_hash)
                     all_candidates.append({
@@ -402,7 +401,7 @@ def run_checks(tasks_cfg: Dict[str, Any], files: List[Path], repo_root: Path, re
                 faiss_results = retriever.query_for_code(code, task_descriptions, top_k=10)
                 for result in faiss_results:
                     text = result.get("text", "")
-                    text_hash = hash(text)
+                    text_hash = hashlib.sha256(text.encode()).hexdigest()
                     if text_hash not in seen_texts and text.strip():
                         seen_texts.add(text_hash)
                         all_candidates.append({

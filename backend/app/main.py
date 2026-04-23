@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import os
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -51,11 +52,22 @@ def get_retriever():
     return _retriever
 
 app = FastAPI(title="Guardians API", version="0.1.0")
+
+_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:4173",
+]
+_extra = os.getenv("ALLOWED_ORIGINS", "")
+_allow_all = _extra.strip() == "*"
+if _extra and not _allow_all:
+    _ALLOWED_ORIGINS.extend(o.strip() for o in _extra.split(",") if o.strip())
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"] if _allow_all else _ALLOWED_ORIGINS,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    allow_credentials=False if _allow_all else True,
 )
 
 
@@ -104,9 +116,10 @@ def list_pull_requests():
 
 
 @app.post("/pull-requests", response_model=PullRequestSummary, status_code=status.HTTP_201_CREATED)
-def ingest_pull_request(payload: PullRequestIngestRequest, _: None = Depends(require_token)):
+async def ingest_pull_request(payload: PullRequestIngestRequest, _: None = Depends(require_token)):
     record = payload.to_record()
     summary = storage.upsert_scan_result(record)
+    enqueue_scan(summary.id)
     return summary
 
 
@@ -119,7 +132,7 @@ def get_pull_request(pr_id: str):
 
 
 @app.post("/pull-requests/{pr_id:path}/rerun", status_code=status.HTTP_202_ACCEPTED)
-def rerun_pull_request(pr_id: str, _: None = Depends(require_token)):
+async def rerun_pull_request(pr_id: str, _: None = Depends(require_token)):
     updated = storage.mark_scan_pending(pr_id)
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PR not found")
@@ -128,7 +141,7 @@ def rerun_pull_request(pr_id: str, _: None = Depends(require_token)):
 
 
 @app.post("/pull-requests/rerun-all", status_code=status.HTTP_202_ACCEPTED)
-def rerun_all_pull_requests(_: None = Depends(require_token)):
+async def rerun_all_pull_requests(_: None = Depends(require_token)):
     ids = storage.list_scan_ids()
     if not ids:
         return {"status": "queued", "count": 0}

@@ -43,6 +43,21 @@ def fetch_pull_request_files(repo_full_name: str, pr_number: int) -> List[str]:
     return filenames
 
 
+def post_pull_request_comment(repo_full_name: str, pr_number: int, body: str) -> bool:
+    if not repo_full_name or not pr_number:
+        return False
+    resp = requests.post(
+        f"{API_BASE}/repos/{repo_full_name}/issues/{pr_number}/comments",
+        headers={**_auth_headers(), "Content-Type": "application/json"},
+        json={"body": body},
+        timeout=15,
+    )
+    if resp.status_code not in (200, 201):
+        logger.warning("Failed to post PR comment (%s): %s", resp.status_code, resp.text)
+        return False
+    return True
+
+
 def fetch_file_content(repo_full_name: str, path: str, ref: Optional[str]) -> Optional[str]:
     if not repo_full_name or not path:
         return None

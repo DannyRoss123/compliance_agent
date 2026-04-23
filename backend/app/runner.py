@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .github_client import fetch_file_content
+from .github_client import fetch_file_content, post_pull_request_comment
 from . import storage
 from .schemas import AgentRunIngestRequest, AgentViolation
 
@@ -26,10 +26,16 @@ _running: set[str] = set()
 def enqueue_scan(pr_id: str) -> None:
     try:
         loop = asyncio.get_running_loop()
+        # Called from an async context — schedule directly.
+        loop.create_task(_run_scan_task(pr_id))
     except RuntimeError:
-        logger.warning("No running event loop; cannot enqueue scan for %s", pr_id)
-        return
-    loop.create_task(_run_scan_task(pr_id))
+        # Called from a sync route handler running in FastAPI's thread pool.
+        # Use run_coroutine_threadsafe to safely schedule on the main event loop.
+        try:
+            loop = asyncio.get_event_loop()
+            asyncio.run_coroutine_threadsafe(_run_scan_task(pr_id), loop)
+        except Exception as exc:
+            logger.warning("Cannot enqueue scan for %s: %s", pr_id, exc)
 
 
 async def _run_scan_task(pr_id: str) -> None:
@@ -103,11 +109,14 @@ def _run_scan_sync(pr_id: str) -> None:
             findings, summary = run_checks(tasks_cfg, temp_files, tmp_path, retriever=retriever)
         except Exception as exc:
             logger.error("Validation failed for %s: %s", pr_id, exc)
+            _post_error_comment(record.repository, record.number, str(exc))
+            _save_error_result(pr_id, str(exc))
             return
 
     passed = len(findings) == 0
     violations = _build_violations_from_findings(findings, tasks, path_map)
     _save_runner_result(pr_id, violations, passed, len(tasks), start)
+    _post_github_comment(record.repository, record.number, violations, passed, len(tasks))
 
 
 def _build_violations_from_findings(findings: List[Finding], tasks: List[dict], path_map: Dict[str, str]) -> List[AgentViolation]:
@@ -177,3 +186,74 @@ def _save_runner_result(pr_id: str, violations: List[AgentViolation], passed: bo
     )
     storage.save_scan_result(request.to_record())
     logger.info("Stored scan result for %s (%s)", pr_id, status)
+
+
+def _post_error_comment(repo: str, pr_number: int, error_detail: str) -> None:
+    if not repo or not pr_number:
+        return
+    body = (
+        "## ⚠️ Guardians — Scan failed\n\n"
+        "The compliance scan could not complete. Check that `OPENAI_API_KEY` and `OPENAI_MODEL` "
+        "are set correctly in the backend environment.\n\n"
+        f"<details><summary>Error detail</summary>\n\n```\n{error_detail}\n```\n</details>"
+    )
+    post_pull_request_comment(repo, pr_number, body)
+
+
+def _save_error_result(pr_id: str, error_detail: str) -> None:
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    request = AgentRunIngestRequest(
+        pullRequestId=pr_id,
+        status="error",
+        started_at=now,
+        completed_at=now,
+        task_count=0,
+        source="backend_runner",
+        notes=f"Scan failed: {error_detail[:200]}",
+        violations=[],
+    )
+    storage.save_scan_result(request.to_record())
+
+
+def _post_github_comment(repo: str, pr_number: int, violations: List[AgentViolation], passed: bool, task_count: int) -> None:
+    if not repo or not pr_number:
+        return
+
+    if passed:
+        body = (
+            "## ✅ Guardians — All checks passed\n\n"
+            f"**{task_count}/{task_count}** compliance tasks satisfied. No violations detected."
+        )
+    else:
+        failed_tasks = len(set(v.taskId for v in violations))
+        passed_count = task_count - failed_tasks
+        severity_icon = {"critical": "🔴", "warning": "🟡", "info": "🔵"}
+
+        rows = "\n".join(
+            f"| {severity_icon.get(v.severity, '⚪')} {v.severity} "
+            f"| `{v.file}` | {v.line} | {v.message} |"
+            for v in violations
+        )
+
+        fixes = "\n\n".join(
+            f"**`{v.file}:{v.line}`** — {v.suggestedFix}"
+            for v in violations
+            if v.suggestedFix
+        )
+
+        body = (
+            f"## ❌ Guardians — {len(violations)} violation(s) detected\n\n"
+            f"**{passed_count}/{task_count}** compliance tasks passed.\n\n"
+            "| Severity | File | Line | Issue |\n"
+            "|----------|------|------|-------|\n"
+            f"{rows}\n"
+        )
+        if fixes:
+            body += f"\n<details>\n<summary>Suggested fixes</summary>\n\n{fixes}\n</details>\n"
+
+    ok = post_pull_request_comment(repo, pr_number, body)
+    if ok:
+        logger.info("Posted compliance comment on %s#%s", repo, pr_number)
+    else:
+        logger.warning("Could not post comment on %s#%s", repo, pr_number)

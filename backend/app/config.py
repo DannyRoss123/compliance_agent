@@ -1,6 +1,8 @@
 from pathlib import Path
 import os
+from dotenv import load_dotenv
 
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv("GUARDIANS_DATA_DIR", BASE_DIR / "data"))

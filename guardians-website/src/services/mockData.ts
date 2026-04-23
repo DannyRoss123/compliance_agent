@@ -94,6 +94,14 @@ export const MOCK_PRS: PullRequest[] = [
         line: 88,
         suggestedFix:
           'Mask user identifiers before logging or remove field entirely.',
+        codeSnippet: `85  export function serializeEvent(event: AuditEvent): LogPayload {
+86    return {
+87      timestamp: event.timestamp,
+88      user_email: event.user.email,   // ← PII logged in plaintext
+89      action: event.action,
+90      resource_id: event.resourceId,
+91    };
+92  }`,
       },
       {
         severity: 'warning',
@@ -101,6 +109,13 @@ export const MOCK_PRS: PullRequest[] = [
         message: 'Log context missing requestId property.',
         file: 'src/log/logger.ts',
         line: 54,
+        codeSnippet: `51  function logRequest(req: Request, level: LogLevel, msg: string) {
+52    logger[level]({
+53      service: 'observability',
+54      message: msg,               // ← requestId absent from context
+55      userId: req.user?.id,
+56    });
+57  }`,
       },
     ],
   },
@@ -146,6 +161,13 @@ export const MOCK_PRS: PullRequest[] = [
         file: 'src/retry/workflow.ts',
         line: 132,
         suggestedFix: 'Persist retry tokens and short-circuit duplicates.',
+        codeSnippet: `129  async function retryCharge(chargeId: string, amount: number) {
+130    const charge = await stripe.charges.retrieve(chargeId);
+131    if (charge.status === 'failed') {
+132      return await stripe.charges.create({ amount, currency: 'usd' });
+133      // ← No idempotency key — duplicate charges possible on network retry
+134    }
+135  }`,
       },
       {
         severity: 'warning',
@@ -153,6 +175,14 @@ export const MOCK_PRS: PullRequest[] = [
         message: 'New retry path missing metrics emission.',
         file: 'src/retry/metrics.ts',
         line: 45,
+        codeSnippet: `42  export async function handleRetryEvent(event: RetryEvent) {
+43    const result = await processRetry(event);
+44    if (result.success) {
+45      // ← No metrics.increment('retry.success') call
+46      return result;
+47    }
+48    metrics.increment('retry.failure', { reason: result.error });
+49  }`,
       },
     ],
   },

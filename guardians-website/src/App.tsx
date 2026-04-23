@@ -18,6 +18,7 @@ import {
   rerunAllPullRequests,
   rerunPullRequest,
   saveTaskSet,
+  uploadDocumentsToBackend,
 } from './services/apiService';
 import { MOCK_PRS, MOCK_TASKS } from './services/mockData';
 
@@ -266,6 +267,11 @@ function App() {
     setShowSuccess(true);
 
     void syncTasksToBackend(tasks);
+    // Also upload raw docs to backend so RAG index is populated for validation
+    const rawFiles = state.uploadedFiles
+      .map((f) => fileLibrary[f.id])
+      .filter((f): f is File => Boolean(f));
+    void uploadDocumentsToBackend(rawFiles);
   };
 
   const handleRefreshTasks = () => {

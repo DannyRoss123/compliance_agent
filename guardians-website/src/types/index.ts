@@ -37,6 +37,7 @@ export interface Violation {
   file: string;
   line: number;
   suggestedFix?: string;
+  codeSnippet?: string;
 }
 
 export interface PullRequest {

@@ -110,6 +110,23 @@ export async function rerunPullRequest(prId: string): Promise<void> {
   }
 }
 
+export async function uploadDocumentsToBackend(files: File[]): Promise<void> {
+  if (!hasApi || !files.length) return;
+  const formData = new FormData();
+  files.forEach((f) => formData.append('files', f));
+  try {
+    await fetch(`${API_BASE_URL}/documents`, {
+      method: 'POST',
+      headers: {
+        ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}),
+      },
+      body: formData,
+    });
+  } catch (error) {
+    console.warn('[apiService] Document RAG upload failed (non-blocking):', error);
+  }
+}
+
 export async function rerunAllPullRequests(): Promise<void> {
   if (!hasApi) return;
   const response = await fetch(`${API_BASE_URL}/pull-requests/rerun-all`, {
@@ -171,10 +188,10 @@ function normalizeViolations(entries?: any[]): Violation[] {
     .filter(Boolean)
     .map((entry) => ({
       severity: (entry.severity ?? 'warning') as Violation['severity'],
-      rule: entry.task_id ?? entry.rule ?? entry.name ?? 'Policy check',
+      rule: entry.taskId ?? entry.task_id ?? entry.rule ?? entry.name ?? 'Policy check',
       message: entry.message ?? 'Task violation detected.',
       file: entry.file ?? 'unknown',
       line: typeof entry.line === 'number' ? entry.line : 1,
-      suggestedFix: entry.suggested_fix ?? entry.suggestedFix ?? entry.fix,
+      suggestedFix: entry.suggestedFix ?? entry.suggested_fix ?? entry.fix,
     }));
 }

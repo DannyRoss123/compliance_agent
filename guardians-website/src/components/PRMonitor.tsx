@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, GitPullRequest, Loader2, RefreshCw, Shield } from 'lucide-react';
-import type { PullRequest } from '../types';
+import { ChevronRight, Code2, FileCode, GitPullRequest, Loader2, RefreshCw, Shield } from 'lucide-react';
+import type { PullRequest, Violation } from '../types';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 
@@ -47,6 +47,104 @@ const formatTimestamp = (value?: string | null) => {
     return value;
   }
 };
+
+function groupViolationsByFile(violations: Violation[]): Record<string, Violation[]> {
+  return violations.reduce<Record<string, Violation[]>>((acc, v) => {
+    (acc[v.file] ??= []).push(v);
+    return acc;
+  }, {});
+}
+
+function CodeTabViewer({ violations }: { violations: Violation[] }) {
+  const byFile = useMemo(() => groupViolationsByFile(violations), [violations]);
+  const files = Object.keys(byFile);
+  const [activeFile, setActiveFile] = useState(files[0] ?? '');
+
+  if (!files.length) return null;
+
+  const activeViolations = byFile[activeFile] ?? [];
+  const snippet = activeViolations.find((v) => v.codeSnippet)?.codeSnippet;
+
+  return (
+    <article className="rounded-3xl border border-border/70 bg-panel overflow-hidden">
+      <div className="flex items-center gap-2 border-b border-border/60 px-4 pt-4 pb-0">
+        <Code2 className="h-4 w-4 text-textMuted" />
+        <span className="text-xs font-semibold uppercase tracking-[0.3em] text-textMuted">Code review</span>
+      </div>
+      {/* File tabs */}
+      <div className="flex gap-1 overflow-x-auto border-b border-border/60 bg-panelMuted/30 px-3 pt-2">
+        {files.map((file) => (
+          <button
+            key={file}
+            type="button"
+            onClick={() => setActiveFile(file)}
+            className={`flex shrink-0 items-center gap-1.5 rounded-t-lg border border-b-0 px-3 py-1.5 text-xs transition ${
+              activeFile === file
+                ? 'border-border/70 bg-panel text-text'
+                : 'border-transparent text-textMuted hover:text-text'
+            }`}
+          >
+            <FileCode className="h-3 w-3" />
+            <span className="max-w-[160px] truncate">{file.split('/').pop()}</span>
+            <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+              byFile[file].some(v => v.severity === 'critical')
+                ? 'bg-critical/20 text-critical'
+                : 'bg-warning/20 text-warning'
+            }`}>
+              {byFile[file].length}
+            </span>
+          </button>
+        ))}
+      </div>
+      {/* Code snippet */}
+      {snippet ? (
+        <pre className="overflow-x-auto bg-[#0d1117] p-4 text-xs leading-relaxed text-[#c9d1d9] font-mono">
+          {snippet.split('\n').map((line, i) => {
+            const isViolation = activeViolations.some((v) => {
+              const lineNum = parseInt(line.trim().split(' ')[0], 10);
+              return !isNaN(lineNum) && lineNum === v.line;
+            });
+            return (
+              <div
+                key={i}
+                className={isViolation ? 'rounded bg-[#ff000020] px-1 -mx-1' : ''}
+              >
+                {line}
+              </div>
+            );
+          })}
+        </pre>
+      ) : (
+        <div className="px-4 py-6 text-center text-xs text-textMuted">
+          <p className="font-semibold">{activeFile}</p>
+          <p className="mt-1 text-textMuted/60">Code preview available after first scan with policy documents uploaded.</p>
+        </div>
+      )}
+      {/* Violations for active file */}
+      <ul className="divide-y divide-border/40 px-4 pb-4">
+        {activeViolations.map((v, i) => (
+          <li key={i} className="py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-text">{v.rule}</p>
+                <p className="text-xs text-textMuted">line {v.line}</p>
+                <p className="mt-1 text-sm text-text/80">{v.message}</p>
+                {v.suggestedFix && (
+                  <p className="mt-1 text-xs text-textMuted">
+                    <span className="font-semibold text-text">Fix: </span>{v.suggestedFix}
+                  </p>
+                )}
+              </div>
+              <Badge variant={v.severity === 'critical' ? 'critical' : v.severity === 'warning' ? 'warning' : 'outline'} className="shrink-0">
+                {v.severity}
+              </Badge>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </article>
+  );
+}
 
 export function PRMonitor({
   pullRequests,
@@ -169,41 +267,15 @@ export function PRMonitor({
           </div>
         </article>
 
-        <article className="rounded-3xl border border-border/70 bg-panel p-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-text">Policy findings</h3>
-            <Badge variant="outline">{selectedPR.violationDetails.length} issues</Badge>
-          </div>
-          {selectedPR.violationDetails.length ? (
-            <ul className="mt-4 space-y-4">
-              {selectedPR.violationDetails.map((violation, index) => (
-                <li key={`${violation.rule}-${violation.file}-${index}`} className="rounded-2xl border border-border/50 bg-panelMuted/40 p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-text">{violation.rule}</p>
-                      <p className="text-xs text-textMuted">
-                        {violation.file} · line {violation.line}
-                      </p>
-                    </div>
-                    <Badge variant={violation.severity === 'critical' ? 'critical' : violation.severity === 'warning' ? 'warning' : 'outline'}>
-                      {violation.severity.toUpperCase()}
-                    </Badge>
-                  </div>
-                  <p className="mt-3 text-sm text-text">{violation.message}</p>
-                  {violation.suggestedFix && (
-                    <p className="mt-2 text-sm text-textMuted">
-                      <span className="font-semibold text-text">Suggested fix:</span> {violation.suggestedFix}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="mt-4 rounded-2xl border border-dashed border-border/60 bg-panelMuted/20 px-4 py-8 text-center text-sm text-textMuted">
+        {selectedPR.violationDetails.length > 0 ? (
+          <CodeTabViewer violations={selectedPR.violationDetails} />
+        ) : (
+          <article className="rounded-3xl border border-border/70 bg-panel p-6">
+            <div className="rounded-2xl border border-dashed border-border/60 bg-panelMuted/20 px-4 py-8 text-center text-sm text-textMuted">
               No violations detected on the latest run.
             </div>
-          )}
-        </article>
+          </article>
+        )}
       </div>
     );
   };
