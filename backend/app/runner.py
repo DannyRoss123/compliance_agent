@@ -237,9 +237,9 @@ def _post_github_comment(repo: str, pr_number: int, violations: List[AgentViolat
         )
 
         fixes = "\n\n".join(
-            f"**`{v.file}:{v.line}`** — {v.suggestedFix}"
+            f"**`{v.file}:{v.line}`** — {v.suggested_fix}"
             for v in violations
-            if v.suggestedFix
+            if v.suggested_fix
         )
 
         body = (
