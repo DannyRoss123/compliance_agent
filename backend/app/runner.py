@@ -226,7 +226,7 @@ def _post_github_comment(repo: str, pr_number: int, violations: List[AgentViolat
             f"**{task_count}/{task_count}** compliance tasks satisfied. No violations detected."
         )
     else:
-        failed_tasks = len(set(v.taskId for v in violations))
+        failed_tasks = len(set(v.task_id for v in violations))
         passed_count = task_count - failed_tasks
         severity_icon = {"critical": "🔴", "warning": "🟡", "info": "🔵"}
 
