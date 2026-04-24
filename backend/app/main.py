@@ -27,6 +27,11 @@ from .schemas import (
 from . import storage
 from .runner import enqueue_scan
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    force=True,
+)
 logger = logging.getLogger(__name__)
 
 ensure_directories()
