@@ -1,6 +1,6 @@
 databases:
   - name: guardians-db
-    plan: starter
+    plan: free
     databaseName: guardians
     user: guardians
 
