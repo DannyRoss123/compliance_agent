@@ -1,3 +1,6 @@
+# FastAPI application entry point. Defines all API routes, CORS config, and the GitHub
+# webhook handler. The RAG retriever singleton is initialized lazily on first document upload
+# and persisted to disk so it survives deploys.
 from __future__ import annotations
 import logging
 import os

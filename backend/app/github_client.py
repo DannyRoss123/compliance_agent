@@ -1,3 +1,6 @@
+# Handles all outbound GitHub API calls: fetching PR file lists, fetching file
+# contents at a specific commit SHA, and posting compliance comments back to PRs.
+# All requests are authenticated via the GITHUB_ACCESS_TOKEN personal access token.
 from __future__ import annotations
 import base64
 import logging
@@ -12,6 +15,7 @@ API_BASE = "https://api.github.com"
 
 
 def _auth_headers() -> dict:
+    # Builds auth headers for every GitHub API request using the PAT
     headers = {"Accept": "application/vnd.github+json"}
     if GITHUB_ACCESS_TOKEN:
         headers["Authorization"] = f"Bearer {GITHUB_ACCESS_TOKEN}"
@@ -19,6 +23,7 @@ def _auth_headers() -> dict:
 
 
 def fetch_pull_request_files(repo_full_name: str, pr_number: int) -> List[str]:
+    # Returns list of file paths changed in the PR, paginated at 100 per page
     if not repo_full_name:
         return []
     params = {"per_page": 100, "page": 1}
@@ -44,6 +49,7 @@ def fetch_pull_request_files(repo_full_name: str, pr_number: int) -> List[str]:
 
 
 def post_pull_request_comment(repo_full_name: str, pr_number: int, body: str) -> bool:
+    # Posts a markdown comment to the PR — PRs use the issues comments endpoint in GitHub's API
     if not repo_full_name or not pr_number:
         return False
     resp = requests.post(
@@ -59,6 +65,7 @@ def post_pull_request_comment(repo_full_name: str, pr_number: int, body: str) ->
 
 
 def fetch_file_content(repo_full_name: str, path: str, ref: Optional[str]) -> Optional[str]:
+    # Fetches full file content at a specific commit SHA, returned as base64 by GitHub then decoded
     if not repo_full_name or not path:
         return None
     params = {"ref": ref} if ref else {}

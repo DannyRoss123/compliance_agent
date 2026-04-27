@@ -1,3 +1,6 @@
+// All HTTP calls from the frontend to the backend live here.
+// Components never call fetch directly — they import functions from this file.
+// Falls back to mock data if VITE_GUARDIANS_API_URL is not configured.
 import type { PullRequest, Task, TaskSetMetadata, Violation } from '../types';
 import { MOCK_PRS } from './mockData';
 
@@ -5,6 +8,7 @@ const API_BASE_URL = import.meta.env.VITE_GUARDIANS_API_URL;
 const API_TOKEN = import.meta.env.VITE_GUARDIANS_API_TOKEN;
 const hasApi = Boolean(API_BASE_URL);
 
+// Fetches all scanned PRs from the backend, falls back to mock data on error
 export async function fetchPullRequests(): Promise<PullRequest[]> {
   if (!hasApi) {
     return new Promise((resolve) =>
@@ -40,6 +44,7 @@ export function exportTasksAsJson(tasks: Task[]): string {
   return URL.createObjectURL(blob);
 }
 
+// Syncs the extracted task set to the backend so the runner knows what rules to enforce
 export async function saveTaskSet(tasks: Task[]): Promise<TaskSetMetadata | null> {
   if (!hasApi) {
     console.info('[apiService] No API base URL configured; skipping task sync.');
@@ -110,20 +115,20 @@ export async function rerunPullRequest(prId: string): Promise<void> {
   }
 }
 
+// Uploads policy documents to the backend, triggering RAG ingestion (chunking, embedding, task extraction)
 export async function uploadDocumentsToBackend(files: File[]): Promise<void> {
   if (!hasApi || !files.length) return;
   const formData = new FormData();
   files.forEach((f) => formData.append('files', f));
-  try {
-    await fetch(`${API_BASE_URL}/documents`, {
-      method: 'POST',
-      headers: {
-        ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}),
-      },
-      body: formData,
-    });
-  } catch (error) {
-    console.warn('[apiService] Document RAG upload failed (non-blocking):', error);
+  const response = await fetch(`${API_BASE_URL}/documents`, {
+    method: 'POST',
+    headers: {
+      ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}),
+    },
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error(`Document upload failed (${response.status})`);
   }
 }
 
@@ -140,6 +145,7 @@ export async function rerunAllPullRequests(): Promise<void> {
   }
 }
 
+// Normalizes raw backend PR response into the PullRequest shape the frontend expects
 function normalizePullRequest(item: any): PullRequest {
   const violationDetails = normalizeViolations(item.result ?? item.violationDetails);
   const repo = item.repository ?? 'unknown/unknown';
@@ -182,6 +188,7 @@ function normalizeStatus(status?: string): PullRequest['status'] {
   return 'pending';
 }
 
+// Maps raw violation objects from the backend into typed Violation objects, handling snake_case/camelCase variants
 function normalizeViolations(entries?: any[]): Violation[] {
   if (!Array.isArray(entries)) return [];
   return entries

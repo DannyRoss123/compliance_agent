@@ -1,3 +1,6 @@
+# The agent runner — executes compliance scans asynchronously after a GitHub webhook fires.
+# Flow: webhook receives PR → enqueue_scan() schedules background task → _run_scan_sync()
+# fetches files, runs RAG + LLM validation, saves results, posts GitHub PR comment.
 from __future__ import annotations
 import asyncio
 import json

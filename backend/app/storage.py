@@ -1,3 +1,7 @@
+# All PostgreSQL read/write operations. Three main tables:
+# - TaskSet: compliance rules extracted from uploaded policy documents
+# - ScanResult: every PR scan with status, violations, and timestamps
+# - Document: raw policy documents that were uploaded
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -17,6 +21,7 @@ from .schemas import (
 
 
 def save_task_set(tasks: List[Task]) -> TaskMetadata:
+    # Saves a new task set from the frontend onboarding flow (structured Task objects)
     now = datetime.now(timezone.utc)
     task_set_id = f"taskset-{now.isoformat().replace(':', '-')}"
     payload = [task.as_payload() for task in tasks]
@@ -48,6 +53,7 @@ def save_task_set_raw(tasks: List[dict]) -> None:
 
 
 def load_latest_tasks_payload() -> Optional[dict]:
+    # Fetches the most recently created task set — this is what the runner uses for every scan
     with get_session() as session:
         statement = select(TaskSet).order_by(TaskSet.created_at.desc()).limit(1)
         result = session.exec(statement).first()
@@ -63,6 +69,7 @@ def load_latest_tasks_payload() -> Optional[dict]:
 
 
 def load_pull_requests() -> List[PullRequestSummary]:
+    # Returns all PR scan records ordered by most recently completed, used by the frontend PR monitor
     with get_session() as session:
         rows = session.exec(select(ScanResult).order_by(ScanResult.run_completed_at.desc().nulls_last())).all()
         return [
@@ -86,6 +93,7 @@ def load_pull_requests() -> List[PullRequestSummary]:
 
 
 def load_pull_request_record(pr_id: str) -> Optional[PullRequestDetail]:
+    # Fetches full PR record by ID including changed_files list — used by the runner at scan time
     with get_session() as session:
         row = session.get(ScanResult, pr_id)
         if not row:
@@ -112,6 +120,7 @@ def load_pull_request_record(pr_id: str) -> Optional[PullRequestDetail]:
 
 
 def upsert_scan_result(record: PullRequestRecord) -> PullRequestSummary:
+    # Creates or updates a PR scan record — called at webhook time to register the PR before scanning
     with get_session() as session:
         row = session.get(ScanResult, record.id)
         if not row:
@@ -163,6 +172,7 @@ def upsert_scan_result(record: PullRequestRecord) -> PullRequestSummary:
 
 
 def save_scan_result(record: AgentRunRecord) -> None:
+    # Updates PR record with scan results — status, violations, timestamps — called after scan completes
     with get_session() as session:
         row = session.get(ScanResult, record.pull_request_id)
         if not row:
@@ -254,6 +264,7 @@ def load_documents() -> List[dict]:
 
 
 def _map_run_status(status: str) -> str:
+    # Converts runner status values to frontend-expected status values
     if status == "passed":
         return "ready"
     if status == "warnings":
