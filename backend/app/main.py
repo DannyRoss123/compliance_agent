@@ -1,6 +1,7 @@
 # FastAPI application entry point. Defines all API routes, CORS config, and the GitHub
 # webhook handler. The RAG retriever singleton is initialized lazily on first document upload
 # and persisted to disk so it survives deploys.
+
 from __future__ import annotations
 import logging
 import os
@@ -44,6 +45,7 @@ init_db()
 _retriever = None
 
 
+# Returns the singleton RAG retriever — creates it on first call and loads persisted FAISS index if available
 def get_retriever():
     global _retriever
     if _retriever is None:
@@ -79,6 +81,7 @@ app.add_middleware(
 )
 
 
+# FastAPI dependency — rejects requests without a valid bearer token; no-op if API_TOKEN is unset
 def require_token(authorization: Optional[str] = Header(default=None)) -> None:
     if not API_TOKEN:
         return
@@ -90,6 +93,7 @@ def require_token(authorization: Optional[str] = Header(default=None)) -> None:
 
 
 @app.get("/healthz")
+# Simple liveness check — load balancers and Render health checks hit this to confirm the app is up
 def healthcheck():
     return {
         "status": "ok",
@@ -99,6 +103,7 @@ def healthcheck():
 
 
 @app.post("/tasks", response_model=TaskIngestResponse, status_code=status.HTTP_201_CREATED)
+# Saves the compliance task set sent by the frontend after document processing; requires bearer token
 def ingest_tasks(payload: TaskIngestRequest, _: None = Depends(require_token)):
     if not payload.tasks:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one task is required")
@@ -107,6 +112,7 @@ def ingest_tasks(payload: TaskIngestRequest, _: None = Depends(require_token)):
 
 
 @app.get("/tasks/current")
+# Returns the most recently saved task set — the runner and frontend both call this to get active rules
 def get_current_tasks():
     latest = storage.load_latest_tasks_payload()
     if not latest:
@@ -118,12 +124,14 @@ def get_current_tasks():
 
 
 @app.get("/pull-requests", response_model=PullRequestListResponse)
+# Returns all known PRs with their scan status — drives the PR monitor table on the frontend
 def list_pull_requests():
     items = storage.load_pull_requests()
     return PullRequestListResponse(items=items)
 
 
 @app.post("/pull-requests", response_model=PullRequestSummary, status_code=status.HTTP_201_CREATED)
+# Creates or updates a PR record and immediately enqueues an async compliance scan
 async def ingest_pull_request(payload: PullRequestIngestRequest, _: None = Depends(require_token)):
     record = payload.to_record()
     summary = storage.upsert_scan_result(record)
@@ -132,6 +140,7 @@ async def ingest_pull_request(payload: PullRequestIngestRequest, _: None = Depen
 
 
 @app.get("/pull-requests/{pr_id:path}", response_model=PullRequestDetail)
+# Fetches full detail for a single PR including changed file paths; uses :path so IDs with slashes work
 def get_pull_request(pr_id: str):
     record = storage.load_pull_request_record(pr_id)
     if not record:
@@ -140,6 +149,7 @@ def get_pull_request(pr_id: str):
 
 
 @app.post("/pull-requests/{pr_id:path}/rerun", status_code=status.HTTP_202_ACCEPTED)
+# Re-runs the compliance scan for one PR — resets it to pending and enqueues a fresh scan
 async def rerun_pull_request(pr_id: str, _: None = Depends(require_token)):
     updated = storage.mark_scan_pending(pr_id)
     if not updated:
@@ -149,6 +159,7 @@ async def rerun_pull_request(pr_id: str, _: None = Depends(require_token)):
 
 
 @app.post("/pull-requests/rerun-all", status_code=status.HTTP_202_ACCEPTED)
+# Bulk re-scan — resets every PR to pending and enqueues scans for all of them
 async def rerun_all_pull_requests(_: None = Depends(require_token)):
     ids = storage.list_scan_ids()
     if not ids:
@@ -160,6 +171,7 @@ async def rerun_all_pull_requests(_: None = Depends(require_token)):
 
 
 @app.post("/agent-runs", response_model=AgentRunRecord, status_code=status.HTTP_202_ACCEPTED)
+# Saves a completed scan result posted by the runner (violations, timestamps, status)
 def ingest_agent_run(payload: AgentRunIngestRequest, _: None = Depends(require_token)):
     record = payload.to_record()
     storage.save_scan_result(record)
@@ -167,6 +179,7 @@ def ingest_agent_run(payload: AgentRunIngestRequest, _: None = Depends(require_t
 
 
 @app.get("/agent-results/{pr_id:path}", response_model=AgentRunRecord)
+# Returns the latest scan result for a PR — includes all violations with file, line, severity, and fix
 def get_agent_results(pr_id: str):
     record = storage.load_scan_result(pr_id)
     if not record:
@@ -233,6 +246,7 @@ def debug_pull_requests():
     return HTMLResponse(content=html_body)
 
 @app.post("/github/webhook", status_code=status.HTTP_202_ACCEPTED)
+# Receives GitHub PR events — validates HMAC signature, then ingests the PR and enqueues a scan
 async def github_webhook(
     request: Request,
     x_github_event: str = Header(alias="X-GitHub-Event"),
@@ -353,10 +367,10 @@ async def ingest_documents(
             except Exception:
                 continue
         if tasks:
-            # Store tasks with source_chunk metadata preserved
-            storage.save_task_set(tasks)
-            # Also store the raw tasks with source chunks for validation
+            # Store raw tasks with source_chunk metadata for validation
             storage.save_task_set_raw(all_extracted_tasks)
+            # Store clean tasks last so load_latest_tasks_payload returns this one
+            storage.save_task_set(tasks)
             logger.info("Saved %d tasks from document ingestion", len(tasks))
 
     return {
@@ -367,6 +381,7 @@ async def ingest_documents(
 
 
 @app.get("/documents")
+# Lists all policy documents that have been uploaded and stored in the DB
 def list_documents():
     """List all ingested compliance documents."""
     docs = storage.load_documents()
@@ -374,6 +389,7 @@ def list_documents():
 
 
 @app.get("/rag/status")
+# Debug: reports how many documents, chunks, and vectors are currently in the FAISS index
 def rag_status():
     """Check the status of the RAG vector index."""
     retriever = get_retriever()
@@ -390,6 +406,7 @@ class RAGQueryRequest(BaseModel):
 
 
 @app.post("/rag/query")
+# Debug: runs a raw query against the FAISS vector index and returns the top-K matching chunks
 def rag_query(body: RAGQueryRequest):
     """Debug endpoint: query the RAG index directly."""
     retriever = get_retriever()
